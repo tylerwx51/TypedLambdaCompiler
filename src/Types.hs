@@ -2,19 +2,21 @@ module Types where
 
 import Data.List as List hiding(lookup)
 import Data.Foldable
-import Data.Monoid
+import Data.Monoid hiding(Sum)
 
 data MonoType = TVar String
               | TCon String
-              | TApp [MonoType]
               | Arrow MonoType MonoType
+              | Prod MonoType MonoType
+              | Sum MonoType MonoType
 
 showPrec :: Int -> MonoType -> String
 showPrec _ (TVar str) = str
-showPrec _ (TApp ts) = "[" ++ foldMap (\t -> showPrec 0 t ++ ",") ts ++ "]"
-showPrec 0 (Arrow t1 t2) = showPrec 1 t1 ++ "->" ++ showPrec 0 t2
-showPrec n (Arrow t1 t2) = "(" ++ showPrec 1 t1 ++ "->" ++ showPrec 0 t2 ++ ")"
 showPrec _ (TCon str) = str
+showPrec 0 (Arrow t1 t2) = showPrec 1 t1 ++ " -> " ++ showPrec 0 t2
+showPrec 0 (Prod t1 t2) = showPrec 0 t1 ++ " * " ++ showPrec 1 t2
+showPrec 0 (Sum t1 t2) = showPrec 0 t1 ++ " + " ++ showPrec 1 t2
+showPrec n t = "(" ++ showPrec 0 t ++ ")"
 
 instance Show MonoType where
   show = showPrec 0
@@ -61,12 +63,16 @@ instance Substitable MonoType where
   substitute n t (TVar str)
     | str == n = t
     | otherwise = TVar str
-  substitute n t (TApp ts) = TApp $ fmap (substitute n t) ts
   substitute n t (Arrow t1 t2) = Arrow (substitute n t t1) (substitute n t t2)
+  substitute n t (Prod t1 t2) = Prod (substitute n t t1) (substitute n t t2)
+  substitute n t (Sum t1 t2) = Sum (substitute n t t1) (substitute n t t2)
+  substitute n _ (TCon t) = TCon t
 
   freeTypeVars (TVar str) = [str]
+  freeTypeVars (TCon _) = []
   freeTypeVars (Arrow t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
-  freeTypeVars (TApp ts) = List.foldl' List.union [] (fmap freeTypeVars ts)
+  freeTypeVars (Prod t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
+  freeTypeVars (Sum t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
 
 instance Substitable PolyType where
   substitute n t (T m) = T $ substitute n t m

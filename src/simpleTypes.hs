@@ -3,9 +3,10 @@ module SimpleTypes where
 
 import Data.List as List hiding(lookup)
 import Data.Map as Map hiding(foldr, foldl', fromList, fold)
+import qualified Data.Map as Map
 import Data.Foldable
 import Control.Applicative
-import Control.Monad.RWS hiding(fail)
+import Control.Monad.RWS hiding(fai, Sum)
 import Control.Monad hiding(fail)
 import Control.Arrow (second)
 import Prelude hiding (fail, lookup)
@@ -73,7 +74,15 @@ inst poly = do
   return $ apply (fromList $ zip vars newVars) mono
 
 unify :: InferMonad m => MonoType -> MonoType -> m Substition
-unify (Arrow a1 b1) (Arrow a2 b2) = mappend <$> unify a1 a2 <*> unify b1 b2
+unify (Arrow a1 b1) (Arrow a2 b2) = do
+  s1 <- unify a1 a2
+  unify (apply s1 b1) (apply s1 b2)
+unify (Prod a1 b1) (Prod a2 b2) = do
+  s1 <- unify a1 a2
+  unify (apply s1 b1) (apply s1 b2)
+unify (Sum a1 b1) (Sum a2 b2) = do
+  s1 <- unify a1 a2
+  unify (apply s1 b1) (apply s1 b2)
 unify (TVar n1) (TVar n2)
   | n1 == n2 = return mempty
   | otherwise = return $ fromList [(n1, TVar n2)]
@@ -81,18 +90,15 @@ unify (TVar n1) t2
   | n1 `elem` freeTypeVars t2 = throw OccursCheck
   | otherwise = return $ fromList [(n1, t2)]
 unify t1 (TVar n2) = unify (TVar n2) t1
-unify (TApp ts1) (TApp ts2) = do
-  subs <- zipWithM unify ts1 ts2
-  return $ fold subs
 unify t1 t2 = throw $ UnificationError t1 t2
 
-typeCheck :: Term -> HM (Substition, MonoType)
+typeCheck :: (InferMonad m) => Term -> m (Substition, MonoType)
 typeCheck (Apply e1 e2) = do
   (s1, t1) <- typeCheck e1
   (s2, t2) <- localEnv (apply s1) $ typeCheck e2
   tOut <- newTVar
   v <- unify (apply s2 t1) (Arrow t2 tOut)
-  return (v <> s2 <> s1, apply v tOut)
+  return (s1 <> s2 <> v, apply v tOut)
 typeCheck (Lambda var e) = do
   tIn <- newTVar
   (s1, tOut) <- localTypeEnv var (T tIn) $ typeCheck e
@@ -101,7 +107,7 @@ typeCheck (Let var e1 e2) = do
   (s1, t1) <- typeCheck e1
   p1 <- fmap (apply s1) (generalize t1)
   (s2, t2) <- localEnv (addToEnv var p1 . apply s1) $ typeCheck e2
-  return (s2 <> s1, t2)
+  return (s1 <> s2, t2)
 typeCheck (Var str) = do
   pType <- lookupVar str
   t <- inst pType
@@ -113,7 +119,16 @@ letters = fmap return ['a' .. 'z']
 uniqueStringList :: [String]
 uniqueStringList = letters ++ liftA2 (++) uniqueStringList letters
 
+leftCon :: (String, PolyType)
+leftCon = ("Left", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Sum (TVar "a") (TVar "b")))
+
+rightCon :: (String, PolyType)
+rightCon = ("Right", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Sum (TVar "b") (TVar "a")))
+
+pairCon :: (String, PolyType)
+pairCon = ("Pair", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Arrow (TVar "b") (Prod (TVar "a") (TVar "b"))))
+
 runHM :: HM (Substition, MonoType) -> Either InferError MonoType
 runHM (HM hm) = do
-  ((_, res), _, _) <- runRWST hm (TEnv mempty) uniqueStringList
+  ((_, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon]) uniqueStringList
   return res
