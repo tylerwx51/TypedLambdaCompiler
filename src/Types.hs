@@ -1,7 +1,6 @@
 module Types where
 
 import Data.List as List hiding(lookup)
-import Data.Foldable
 import Data.Monoid hiding(Sum)
 
 data MonoType = TVar String
@@ -16,7 +15,7 @@ showPrec _ (TCon str) = str
 showPrec 0 (Arrow t1 t2) = showPrec 1 t1 ++ " -> " ++ showPrec 0 t2
 showPrec 0 (Prod t1 t2) = showPrec 0 t1 ++ " * " ++ showPrec 1 t2
 showPrec 0 (Sum t1 t2) = showPrec 0 t1 ++ " + " ++ showPrec 1 t2
-showPrec n t = "(" ++ showPrec 0 t ++ ")"
+showPrec _ t = "(" ++ showPrec 0 t ++ ")"
 
 instance Show MonoType where
   show = showPrec 0
@@ -66,7 +65,7 @@ instance Substitable MonoType where
   substitute n t (Arrow t1 t2) = Arrow (substitute n t t1) (substitute n t t2)
   substitute n t (Prod t1 t2) = Prod (substitute n t t1) (substitute n t t2)
   substitute n t (Sum t1 t2) = Sum (substitute n t t1) (substitute n t t2)
-  substitute n _ (TCon t) = TCon t
+  substitute _ _ (TCon t) = TCon t
 
   freeTypeVars (TVar str) = [str]
   freeTypeVars (TCon _) = []
@@ -83,21 +82,43 @@ instance Substitable PolyType where
   freeTypeVars (T mType) = freeTypeVars mType
   freeTypeVars (Forall a pType) = List.delete a (freeTypeVars pType)
 
+data Pattern = MatchLeft Pattern
+             | MatchRight Pattern
+             | MatchProd Pattern Pattern
+             | Otherwise String
+
+instance Show Pattern where
+  show (MatchLeft patt) = "Left (" ++ show patt ++ ")"
+  show (MatchRight patt) = "Right (" ++ show patt ++ ")"
+  show (MatchProd patt1 patt2) = "(" ++ show patt1 ++ ", " ++ show patt2 ++ ")"
+  show (Otherwise x) = x
+
+varList :: Pattern -> [String]
+varList (MatchLeft patt) = varList patt
+varList (MatchRight patt) = varList patt
+varList (MatchProd patt1 patt2) = varList patt1 ++ varList patt2
+varList (Otherwise t) = [t]
+
 data Term = Apply Term Term
           | Let String Term Term
           | Lambda String Term
+          | Case [(Pattern, Term)]
           | Var String
 
 unLambda :: Term -> ([String], Term)
 unLambda (Lambda var term) = let (xs, t) = unLambda term in (var : xs, t)
 unLambda t = ([], t)
 
+showCase :: (Pattern, Term) -> String
+showCase (p, e) = show p ++ " -> " ++ show e
+
 showPrecT :: Int -> Term -> String
 showPrecT _ (Var str) = str
 showPrecT 0 (Let var e1 e2) = "let " ++ var ++ " = " ++ showPrecT 0 e1 ++ " in " ++ showPrecT 0 e2
 showPrecT 0 e@(Lambda _ _) = let (vars, eIn) = unLambda e in "\\" ++ unwords vars ++ " -> " ++ showPrecT 0 eIn
 showPrecT 0 (Apply e1 e2) = showPrecT 0 e1 ++ " " ++ showPrecT 1 e2
-showPrecT n e = "(" ++ showPrecT 0 e ++ ")"
+showPrecT 0 (Case es) = "Case \n" ++ unlines (fmap (("\t"++) . showCase) es)
+showPrecT _ e = "(" ++ showPrecT 0 e ++ ")"
 
 instance Show Term where
   show = showPrecT 0
