@@ -82,6 +82,8 @@ unify :: InferMonad m => MonoType -> MonoType -> m Substition
 unify (Arrow a1 b1) (Arrow a2 b2) = unifyApp (a1, a2) (b1, b2)
 unify (Prod a1 b1) (Prod a2 b2) = unifyApp (a1, a2) (b1, b2)
 unify (Sum a1 b1) (Sum a2 b2) = unifyApp (a1, a2) (b1, b2)
+unify Unit Unit = return mempty
+unify Void Void = return mempty
 unify (TVar n1) (TVar n2)
   | n1 == n2 = return mempty
   | otherwise = return $ fromList [(n1, TVar n2)]
@@ -107,6 +109,7 @@ patternType (MatchProd patt1 patt2) = do
 patternType (Otherwise var) = do
   t <- newTVar
   return (t, [(var, t)])
+patternType MatchUnit = return (Unit, [])
 
 patternLam :: InferMonad m => Pattern -> Term -> m (Substition, MonoType)
 patternLam p e = do
@@ -135,10 +138,12 @@ typeCheck (Lambda var e) = do
   (s1, tOut) <- localTypeEnv var (T tIn) $ typeCheck e
   return (s1, Arrow (apply s1 tIn) tOut)
 typeCheck (Let var e1 e2) = do
-  (s1, t1) <- typeCheck e1
-  p1 <- fmap (apply s1) (generalize t1)
-  (s2, t2) <- localEnv (addToEnv var p1 . apply s1) $ typeCheck e2
-  return (s1 <> s2, t2)
+  newVar <- newTVar
+  (s1, t1) <- localEnv (addToEnv var (T newVar)) $ typeCheck e1
+  v <- unify (apply s1 newVar) t1
+  p1 <- localEnv (apply (s1 <> v)) $ generalize (apply v t1)
+  (s2, t2) <- localEnv (addToEnv var p1 . apply (s1 <> v)) $ typeCheck e2
+  return (s1 <> v <> s2, t2)
 typeCheck (Var str) = do
   pType <- lookupVar str
   t <- inst pType
@@ -160,10 +165,13 @@ rightCon = ("Right", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Sum (TVar "
 pairCon :: (String, PolyType)
 pairCon = ("Pair", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Arrow (TVar "b") (Prod (TVar "a") (TVar "b"))))
 
+unitCon :: (String, PolyType)
+unitCon = ("Unit", T Unit)
+
 execHM :: HM (Substition, MonoType) -> Either InferError MonoType
 execHM = fmap fst . runHM
 
 runHM :: HM (Substition, MonoType) -> Either InferError (MonoType, Substition)
 runHM (HM hm) = do
-  ((s, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon]) uniqueStringList
+  ((s, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon, unitCon]) uniqueStringList
   return (res, s)

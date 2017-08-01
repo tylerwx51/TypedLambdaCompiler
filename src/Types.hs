@@ -8,13 +8,17 @@ data MonoType = TVar String
               | Arrow MonoType MonoType
               | Prod MonoType MonoType
               | Sum MonoType MonoType
+              | Unit
+              | Void
 
 showPrec :: Int -> MonoType -> String
 showPrec _ (TVar str) = str
 showPrec _ (TCon str) = str
 showPrec 0 (Arrow t1 t2) = showPrec 1 t1 ++ " -> " ++ showPrec 0 t2
-showPrec 0 (Prod t1 t2) = showPrec 0 t1 ++ " * " ++ showPrec 1 t2
-showPrec 0 (Sum t1 t2) = showPrec 0 t1 ++ " + " ++ showPrec 1 t2
+showPrec 0 (Prod t1 t2) = showPrec 1 t1 ++ " * " ++ showPrec 1 t2
+showPrec 0 (Sum t1 t2) = showPrec 1 t1 ++ " + " ++ showPrec 1 t2
+showPrec _ Unit = "Unit"
+showPrec _ Void = "Void"
 showPrec _ t = "(" ++ showPrec 0 t ++ ")"
 
 instance Show MonoType where
@@ -65,13 +69,13 @@ instance Substitable MonoType where
   substitute n t (Arrow t1 t2) = Arrow (substitute n t t1) (substitute n t t2)
   substitute n t (Prod t1 t2) = Prod (substitute n t t1) (substitute n t t2)
   substitute n t (Sum t1 t2) = Sum (substitute n t t1) (substitute n t t2)
-  substitute _ _ (TCon t) = TCon t
+  substitute _ _ t = t
 
   freeTypeVars (TVar str) = [str]
-  freeTypeVars (TCon _) = []
   freeTypeVars (Arrow t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
   freeTypeVars (Prod t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
   freeTypeVars (Sum t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
+  freeTypeVars _ = []
 
 instance Substitable PolyType where
   substitute n t (T m) = T $ substitute n t m
@@ -85,6 +89,7 @@ instance Substitable PolyType where
 data Pattern = MatchLeft Pattern
              | MatchRight Pattern
              | MatchProd Pattern Pattern
+             | MatchUnit
              | Otherwise String
 
 instance Show Pattern where
@@ -92,12 +97,14 @@ instance Show Pattern where
   show (MatchRight patt) = "Right (" ++ show patt ++ ")"
   show (MatchProd patt1 patt2) = "(" ++ show patt1 ++ ", " ++ show patt2 ++ ")"
   show (Otherwise x) = x
+  show MatchUnit = "()"
 
 varList :: Pattern -> [String]
 varList (MatchLeft patt) = varList patt
 varList (MatchRight patt) = varList patt
 varList (MatchProd patt1 patt2) = varList patt1 ++ varList patt2
 varList (Otherwise t) = [t]
+varList MatchUnit = []
 
 data Term = Apply Term Term
           | Let String Term Term
