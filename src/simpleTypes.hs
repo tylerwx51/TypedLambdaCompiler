@@ -6,6 +6,7 @@ import Data.Map as Map hiding(foldr, foldl', fromList, fold)
 import qualified Data.Map as Map
 import Data.Foldable
 import Control.Applicative
+import Control.Arrow (second)
 import Control.Monad.RWS hiding(fail, Sum)
 import Prelude hiding (fail, lookup)
 import Types
@@ -23,7 +24,6 @@ instance Substitable TypeEnv where
 data InferError = OccursCheck
                 | LookupError String
                 | UnificationError MonoType MonoType
-                | EmptyCase
                 deriving(Show)
 
 newtype HM a = HM (RWST TypeEnv () [String] (Either InferError) a) deriving(Functor, Applicative, Monad)
@@ -114,11 +114,11 @@ patternType MatchUnit = return (Unit, [])
 patternLam :: InferMonad m => Pattern -> Term -> m (Substition, MonoType)
 patternLam p e = do
   (tIn, newVars) <- patternType p
-  (s1, tOut) <- localEnv (TEnv (Map.fromList $ fmap (\(a, b) -> (a, T b)) newVars) <>) $ typeCheck e
+  (s1, tOut) <- localEnv (TEnv (Map.fromList $ fmap (second T) newVars) <>) $ typeCheck e
   return (s1, Arrow (apply s1 tIn) tOut)
 
 caseLam :: InferMonad m => [(Pattern, Term)] -> m (Substition, MonoType)
-caseLam [] = throw EmptyCase
+caseLam [] = return (mempty, Void)
 caseLam [(p, t)] = patternLam p t
 caseLam ((p, t):xs) = do
   (s1, t1) <- patternLam p t
@@ -168,10 +168,13 @@ pairCon = ("Pair", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Arrow (TVar "
 unitCon :: (String, PolyType)
 unitCon = ("Unit", T Unit)
 
+decayVoid :: (String, PolyType)
+decayVoid = ("absurd", Forall "a" $ T $ Arrow Void (TVar "a"))
+
 execHM :: HM (Substition, MonoType) -> Either InferError MonoType
 execHM = fmap fst . runHM
 
 runHM :: HM (Substition, MonoType) -> Either InferError (MonoType, Substition)
 runHM (HM hm) = do
-  ((s, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon, unitCon]) uniqueStringList
+  ((s, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon, unitCon, decayVoid]) uniqueStringList
   return (res, s)
