@@ -5,21 +5,44 @@ import Data.Monoid hiding(Sum)
 
 data MonoType = TVar String
               | TCon String
-              | Arrow MonoType MonoType
-              | Prod MonoType MonoType
-              | Sum MonoType MonoType
-              | Unit
-              | Void
+              | TApp MonoType MonoType
+
+tApp :: MonoType -> [MonoType] -> MonoType
+tApp applier [] = applier
+tApp applier [t] = TApp applier t
+tApp applier (t:ts) = tApp (TApp applier t) ts
+
+arrowType :: MonoType
+arrowType = TCon "Arrow" --(KArrow KType (KArrow KType KType))
+
+sumType :: MonoType
+sumType = TCon "Sum" --(KArrow KType (KArrow KType KType))
+
+productType :: MonoType
+productType = TCon "Prod" --(KArrow KType (KArrow KType KType))
+
+arrow :: MonoType -> MonoType -> MonoType
+arrow t1 t2 = tApp arrowType [t1, t2]
+
+sumT :: MonoType -> MonoType -> MonoType
+sumT t1 t2 = tApp sumType [t1, t2]
+
+prod :: MonoType -> MonoType -> MonoType
+prod t1 t2 = tApp productType [t1, t2]
+
+unit :: MonoType
+unit = TCon "Unit" --KType
+
+void :: MonoType
+void = TCon "Void" --KType
+
+fixT :: MonoType -> MonoType
+fixT = TApp (TCon "Fix")
 
 showPrec :: Int -> MonoType -> String
 showPrec _ (TVar str) = str
 showPrec _ (TCon str) = str
-showPrec 0 (Arrow t1 t2) = showPrec 1 t1 ++ " -> " ++ showPrec 0 t2
-showPrec 0 (Prod t1 t2) = showPrec 1 t1 ++ " * " ++ showPrec 1 t2
-showPrec 0 (Sum t1 t2) = showPrec 1 t1 ++ " + " ++ showPrec 1 t2
-showPrec _ Unit = "Unit"
-showPrec _ Void = "Void"
-showPrec _ t = "(" ++ showPrec 0 t ++ ")"
+showPrec _ (TApp t1 t2) = "(" ++ showPrec 0 t1 ++ " " ++ showPrec 1 t2 ++ ")"
 
 instance Show MonoType where
   show = showPrec 0
@@ -66,15 +89,11 @@ instance Substitable MonoType where
   substitute n t (TVar str)
     | str == n = t
     | otherwise = TVar str
-  substitute n t (Arrow t1 t2) = Arrow (substitute n t t1) (substitute n t t2)
-  substitute n t (Prod t1 t2) = Prod (substitute n t t1) (substitute n t t2)
-  substitute n t (Sum t1 t2) = Sum (substitute n t t1) (substitute n t t2)
+  substitute n t (TApp t1 t2) = TApp (substitute n t t1) (substitute n t t2)
   substitute _ _ t = t
 
   freeTypeVars (TVar str) = [str]
-  freeTypeVars (Arrow t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
-  freeTypeVars (Prod t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
-  freeTypeVars (Sum t1 t2) = freeTypeVars (T t1) ++ freeTypeVars (T t2)
+  freeTypeVars (TApp t1 t2) = freeTypeVars t1 ++ freeTypeVars t2
   freeTypeVars _ = []
 
 instance Substitable PolyType where

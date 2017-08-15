@@ -72,18 +72,23 @@ inst poly = do
   newVars <- mapM (const newTVar) vars
   return $ apply (fromList $ zip vars newVars) mono
 
-unifyApp :: (InferMonad m) => (MonoType, MonoType) -> (MonoType, MonoType) -> m Substition
-unifyApp (a1, a2) (b1, b2) = do
-  s1 <- unify a1 a2
-  s2 <- unify (apply s1 b1) (apply s1 b2)
-  return $ s1 <> s2
+{- a b ~ Either c d
+-- a b ~ (Either c) d
+-- a ~ Either c, b ~ d
+-}
 
+{- b (Fix b) ~ (* ()) a
+-- b ~ * ()
+-- a ~ Fix (* ())
+-}
 unify :: InferMonad m => MonoType -> MonoType -> m Substition
-unify (Arrow a1 b1) (Arrow a2 b2) = unifyApp (a1, a2) (b1, b2)
-unify (Prod a1 b1) (Prod a2 b2) = unifyApp (a1, a2) (b1, b2)
-unify (Sum a1 b1) (Sum a2 b2) = unifyApp (a1, a2) (b1, b2)
-unify Unit Unit = return mempty
-unify Void Void = return mempty
+unify (TApp t1 t1') (TApp t2 t2') = do
+  s1 <- unify t1 t2
+  s2 <- unify (apply s1 t1') (apply s1 t2')
+  return (s1 <> s2)
+unify (TCon str1) (TCon str2)
+  | str1 == str2 = return mempty
+  | otherwise = throw $ UnificationError (TCon str1) (TCon str2)
 unify (TVar n1) (TVar n2)
   | n1 == n2 = return mempty
   | otherwise = return $ fromList [(n1, TVar n2)]
@@ -97,28 +102,28 @@ patternType :: InferMonad m => Pattern -> m (MonoType, [(String, MonoType)])
 patternType (MatchLeft patt) = do
   (tLeft, newVars) <- patternType patt
   tRight <- newTVar
-  return (Sum tLeft tRight, newVars)
+  return (sumT tLeft tRight, newVars)
 patternType (MatchRight patt) = do
   tLeft <- newTVar
   (tRight, newVars) <- patternType patt
-  return (Sum tLeft tRight, newVars)
+  return (sumT tLeft tRight, newVars)
 patternType (MatchProd patt1 patt2) = do
   (tLeft, newVars1) <- patternType patt1
   (tRight, newVars2) <- patternType patt2
-  return (Prod tLeft tRight, newVars1 ++ newVars2)
+  return (prod tLeft tRight, newVars1 ++ newVars2)
 patternType (Otherwise var) = do
   t <- newTVar
   return (t, [(var, t)])
-patternType MatchUnit = return (Unit, [])
+patternType MatchUnit = return (unit, [])
 
 patternLam :: InferMonad m => Pattern -> Term -> m (Substition, MonoType)
 patternLam p e = do
   (tIn, newVars) <- patternType p
   (s1, tOut) <- localEnv (TEnv (Map.fromList $ fmap (second T) newVars) <>) $ typeCheck e
-  return (s1, Arrow (apply s1 tIn) tOut)
+  return (s1, arrow (apply s1 tIn) tOut)
 
 caseLam :: InferMonad m => [(Pattern, Term)] -> m (Substition, MonoType)
-caseLam [] = return (mempty, Void)
+caseLam [] = return (mempty, TCon "Void")
 caseLam [(p, t)] = patternLam p t
 caseLam ((p, t):xs) = do
   (s1, t1) <- patternLam p t
@@ -131,12 +136,12 @@ typeCheck (Apply e1 e2) = do
   (s1, t1) <- typeCheck e1
   (s2, t2) <- localEnv (apply s1) $ typeCheck e2
   tOut <- newTVar
-  v <- unify (apply s2 t1) (Arrow t2 tOut)
+  v <- unify (apply s2 t1) (arrow t2 tOut)
   return (s1 <> s2 <> v, apply v tOut)
 typeCheck (Lambda var e) = do
   tIn <- newTVar
   (s1, tOut) <- localTypeEnv var (T tIn) $ typeCheck e
-  return (s1, Arrow (apply s1 tIn) tOut)
+  return (s1, arrow (apply s1 tIn) tOut)
 typeCheck (Let var e1 e2) = do
   newVar <- newTVar
   (s1, t1) <- localEnv (addToEnv var (T newVar)) $ typeCheck e1
@@ -157,24 +162,36 @@ uniqueStringList :: [String]
 uniqueStringList = letters ++ liftA2 (++) uniqueStringList letters
 
 leftCon :: (String, PolyType)
-leftCon = ("Left", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Sum (TVar "a") (TVar "b")))
+leftCon = ("Left", Forall "a" $ Forall "b" $ T $ arrow (TVar "a") (sumT (TVar "a") (TVar "b")))
 
 rightCon :: (String, PolyType)
-rightCon = ("Right", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Sum (TVar "b") (TVar "a")))
+rightCon = ("Right", Forall "a" $ Forall "b" $ T $ arrow (TVar "a") (sumT (TVar "b") (TVar "a")))
 
 pairCon :: (String, PolyType)
-pairCon = ("Pair", Forall "a" $ Forall "b" $ T $ Arrow (TVar "a") (Arrow (TVar "b") (Prod (TVar "a") (TVar "b"))))
+pairCon = ("Pair", Forall "a" $ Forall "b" $ T $ arrow (TVar "a") (arrow (TVar "b") (prod (TVar "a") (TVar "b"))))
 
 unitCon :: (String, PolyType)
-unitCon = ("Unit", T Unit)
+unitCon = ("Unit", T unit)
 
 decayVoid :: (String, PolyType)
-decayVoid = ("absurd", Forall "a" $ T $ Arrow Void (TVar "a"))
+decayVoid = ("absurd", Forall "a" $ T $ arrow (TCon "Void") (TVar "a"))
+
+mkFix :: (String, PolyType)
+mkFix = ("MkFix", Forall "f" $ T $ arrow (TApp (TVar "f") (fixT (TVar "f"))) (fixT (TVar "f")))
+
+unFix :: (String, PolyType)
+unFix = ("unFix", Forall "f" $ T $ arrow (fixT (TVar "f")) (TApp (TVar "f") (fixT (TVar "f"))))
+
+fixTerm :: (String, PolyType)
+fixTerm = ("fix", Forall "a" $ T $ arrow (arrow (TVar "a") (TVar "a")) (TVar "a"))
 
 execHM :: HM (Substition, MonoType) -> Either InferError MonoType
 execHM = fmap fst . runHM
 
 runHM :: HM (Substition, MonoType) -> Either InferError (MonoType, Substition)
 runHM (HM hm) = do
-  ((s, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon, unitCon, decayVoid]) uniqueStringList
+  ((s, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon, unitCon, decayVoid, mkFix, unFix, fixTerm]) uniqueStringList
   return (res, s)
+
+fixTest :: Term
+fixTest = Let "x" (Apply (Var "MkFix") $ Apply (Apply (Var "Pair") (Var "Unit")) (Var "x")) (Var "x")
