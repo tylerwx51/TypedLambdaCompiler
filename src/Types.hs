@@ -109,12 +109,14 @@ data Pattern = MatchLeft Pattern
              | MatchRight Pattern
              | MatchProd Pattern Pattern
              | MatchUnit
+             | MatchFix Pattern
              | Otherwise String
 
 instance Show Pattern where
   show (MatchLeft patt) = "Left (" ++ show patt ++ ")"
   show (MatchRight patt) = "Right (" ++ show patt ++ ")"
   show (MatchProd patt1 patt2) = "(" ++ show patt1 ++ ", " ++ show patt2 ++ ")"
+  show (MatchFix patt) = "Fix (" ++ show patt ++ ")"
   show (Otherwise x) = x
   show MatchUnit = "()"
 
@@ -122,6 +124,7 @@ varList :: Pattern -> [String]
 varList (MatchLeft patt) = varList patt
 varList (MatchRight patt) = varList patt
 varList (MatchProd patt1 patt2) = varList patt1 ++ varList patt2
+varList (MatchFix patt) = varList patt
 varList (Otherwise t) = [t]
 varList MatchUnit = []
 

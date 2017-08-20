@@ -21,7 +21,7 @@ instance Substitable TypeEnv where
 
   freeTypeVars (TEnv ts) = foldMap freeTypeVars ts
 
-data InferError = OccursCheck
+data InferError = OccursCheck MonoType MonoType
                 | LookupError String
                 | UnificationError MonoType MonoType
                 deriving(Show)
@@ -93,7 +93,7 @@ unify (TVar n1) (TVar n2)
   | n1 == n2 = return mempty
   | otherwise = return $ fromList [(n1, TVar n2)]
 unify (TVar n1) t2
-  | n1 `elem` freeTypeVars t2 = throw OccursCheck
+  | n1 `elem` freeTypeVars t2 = throw $ OccursCheck (TVar n1) t2
   | otherwise = return $ fromList [(n1, t2)]
 unify t1 (TVar n2) = unify (TVar n2) t1
 unify t1 t2 = throw $ UnificationError t1 t2
@@ -110,11 +110,18 @@ patternType (MatchRight patt) = do
 patternType (MatchProd patt1 patt2) = do
   (tLeft, newVars1) <- patternType patt1
   (tRight, newVars2) <- patternType patt2
-  return (prod tLeft tRight, newVars1 ++ newVars2)
+  return (prod tLeft tRight, newVars1 <> newVars2)
 patternType (Otherwise var) = do
   t <- newTVar
   return (t, [(var, t)])
 patternType MatchUnit = return (unit, [])
+patternType (MatchFix patt) = do
+  (tf, newVars) <- patternType patt
+  t1 <- newTVar
+  t2 <- newTVar
+  s1 <- unify tf (TApp t1 t2)
+  s2 <- unify (apply s1 t2) (TApp (TCon "Fix") (apply s1 t1))
+  return (fixT (apply (s1 <> s2) t1), newVars)
 
 patternLam :: InferMonad m => Pattern -> Term -> m (Substition, MonoType)
 patternLam p e = do
@@ -155,6 +162,7 @@ typeCheck (Var str) = do
   return (mempty, t)
 typeCheck (Case es) = caseLam es
 
+
 letters :: [String]
 letters = fmap return ['a' .. 'z']
 
@@ -185,13 +193,33 @@ unFix = ("unFix", Forall "f" $ T $ arrow (fixT (TVar "f")) (TApp (TVar "f") (fix
 fixTerm :: (String, PolyType)
 fixTerm = ("fix", Forall "a" $ T $ arrow (arrow (TVar "a") (TVar "a")) (TVar "a"))
 
-execHM :: HM (Substition, MonoType) -> Either InferError MonoType
+execHM :: HM (Substition, a) -> Either InferError a
 execHM = fmap fst . runHM
 
-runHM :: HM (Substition, MonoType) -> Either InferError (MonoType, Substition)
+runHM :: HM (Substition, a) -> Either InferError (a, Substition)
 runHM (HM hm) = do
   ((s, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon, unitCon, decayVoid, mkFix, unFix, fixTerm]) uniqueStringList
   return (res, s)
 
+data NatHelp a = Z | S a
+
 fixTest :: Term
 fixTest = Let "x" (Apply (Var "MkFix") $ Apply (Apply (Var "Pair") (Var "Unit")) (Var "x")) (Var "x")
+
+zTest :: Term
+zTest = Apply (Var "MkFix") (Apply (Var "Left") (Var "Unit"))
+
+sTest :: Term
+sTest = Lambda "n" $ Apply (Var "MkFix") (Apply (Var "Right") (Var "n"))
+
+natTest :: Term
+natTest = Apply sTest (Apply sTest (Apply sTest zTest))
+
+oneTest :: Term
+oneTest = Apply sTest zTest
+
+addTest :: Term
+addTest = Let "add" (Lambda "x" (Case [(MatchFix (MatchLeft MatchUnit), Var "x"),
+                                       (MatchFix (MatchRight (Otherwise "y")),
+                                          Apply sTest (Apply (Apply (Var "add") (Var "x")) (Var "y")))]))
+                    (Apply (Apply (Var "add") oneTest) natTest)
