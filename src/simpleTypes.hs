@@ -98,6 +98,22 @@ unify (TVar n1) t2
 unify t1 (TVar n2) = unify (TVar n2) t1
 unify t1 t2 = throw $ UnificationError t1 t2
 
+coerceTo :: InferMonad m => MonoType -> MonoType -> m Substition
+coerceTo (TApp t1 t1') (TApp t2 t2') = do
+  s1 <- coerceTo t1 t2
+  s2 <- coerceTo (apply s1 t1') (apply s1 t2')
+  return (s1 <> s2)
+coerceTo (TCon str1) (TCon str2)
+  | str1 == str2 = return mempty
+  | otherwise = throw $ UnificationError (TCon str1) (TCon str2)
+coerceTo (TVar n1) (TVar n2)
+  | n1 == n2 = return mempty
+  | otherwise = return $ fromList [(n1, TVar n2)]
+coerceTo (TVar n1) t2
+  | n1 `elem` freeTypeVars t2 = throw $ OccursCheck (TVar n1) t2
+  | otherwise = return $ fromList [(n1, t2)]
+coerceTo t1 t2 = throw $ UnificationError t1 t2
+
 patternType :: InferMonad m => Pattern -> m (MonoType, [(String, MonoType)])
 patternType (MatchLeft patt) = do
   (tLeft, newVars) <- patternType patt
@@ -161,7 +177,12 @@ typeCheck (Var str) = do
   t <- inst pType
   return (mempty, t)
 typeCheck (Case es) = caseLam es
-
+typeCheck (Lit (LitInt _)) = return (mempty, TCon "Int")
+typeCheck (Lit (LitDouble _)) = return (mempty, TCon "Double")
+typeCheck (Coerce term ty) = do
+  (s1, t1) <- typeCheck term
+  s2 <- coerceTo t1 ty
+  return (s1 <> s2, apply s2 t1)
 
 letters :: [String]
 letters = fmap return ['a' .. 'z']

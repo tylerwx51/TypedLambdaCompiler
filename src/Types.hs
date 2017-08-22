@@ -3,6 +3,9 @@ module Types where
 import Data.List as List hiding(lookup)
 import Data.Monoid hiding(Sum)
 
+{-
+Types for Core
+-}
 data MonoType = TVar String
               | TCon String
               | TApp MonoType MonoType
@@ -57,6 +60,9 @@ unForall = impl []
     impl vars (T m) = (vars, m)
     impl vars (Forall n p) = impl (vars ++ [n]) p
 
+{-
+Substitions used in type-checking
+-}
 newtype Substition = Substition [(String, MonoType)] deriving(Show)
 
 fromList :: [(String, MonoType)] -> Substition
@@ -105,6 +111,9 @@ instance Substitable PolyType where
   freeTypeVars (T mType) = freeTypeVars mType
   freeTypeVars (Forall a pType) = List.delete a (freeTypeVars pType)
 
+{-
+Patterns that can be used in case blocks
+-}
 data Pattern = MatchLeft Pattern
              | MatchRight Pattern
              | MatchProd Pattern Pattern
@@ -128,11 +137,17 @@ varList (MatchFix patt) = varList patt
 varList (Otherwise t) = [t]
 varList MatchUnit = []
 
+
+{- Raw Terms -}
+data Literal = LitInt Int | LitDouble Double
+
 data Term = Apply Term Term
           | Let String Term Term
           | Lambda String Term
           | Case [(Pattern, Term)]
           | Var String
+          | Coerce Term MonoType
+          | Lit Literal
 
 unLambda :: Term -> ([String], Term)
 unLambda (Lambda var term) = let (xs, t) = unLambda term in (var : xs, t)
@@ -147,6 +162,7 @@ showPrecT 0 (Let var e1 e2) = "let " ++ var ++ " = " ++ showPrecT 0 e1 ++ " in "
 showPrecT 0 e@(Lambda _ _) = let (vars, eIn) = unLambda e in "\\" ++ unwords vars ++ " -> " ++ showPrecT 0 eIn
 showPrecT 0 (Apply e1 e2) = showPrecT 0 e1 ++ " " ++ showPrecT 1 e2
 showPrecT 0 (Case es) = "Case \n" ++ unlines (fmap (("\t"++) . showCase) es)
+showPrecT 0 (Coerce term ty) = show term ++ " : " ++ show ty
 showPrecT _ e = "(" ++ showPrecT 0 e ++ ")"
 
 instance Show Term where
