@@ -10,20 +10,33 @@ data MonoType = TVar String
               | TCon String
               | TApp MonoType MonoType
 
+-- helper function that helps create higher kinded types
 tApp :: MonoType -> [MonoType] -> MonoType
 tApp applier [] = applier
 tApp applier [t] = TApp applier t
 tApp applier (t:ts) = tApp (TApp applier t) ts
 
+-- Several important "Primative" types
 arrowType :: MonoType
-arrowType = TCon "Arrow" --(KArrow KType (KArrow KType KType))
+arrowType = TCon "Arrow"
 
 sumType :: MonoType
-sumType = TCon "Sum" --(KArrow KType (KArrow KType KType))
+sumType = TCon "Sum"
 
 productType :: MonoType
-productType = TCon "Prod" --(KArrow KType (KArrow KType KType))
+productType = TCon "Prod"
 
+unit :: MonoType
+unit = TCon "Unit"
+
+void :: MonoType
+void = TCon "Void"
+
+fix :: MonoType
+fix = TCon "Fix"
+
+
+-- Helper functions for "Primative" types
 arrow :: MonoType -> MonoType -> MonoType
 arrow t1 t2 = tApp arrowType [t1, t2]
 
@@ -33,14 +46,8 @@ sumT t1 t2 = tApp sumType [t1, t2]
 prod :: MonoType -> MonoType -> MonoType
 prod t1 t2 = tApp productType [t1, t2]
 
-unit :: MonoType
-unit = TCon "Unit" --KType
-
-void :: MonoType
-void = TCon "Void" --KType
-
 fixT :: MonoType -> MonoType
-fixT = TApp (TCon "Fix")
+fixT = TApp fix
 
 showPrec :: Int -> MonoType -> String
 showPrec _ (TVar str) = str
@@ -142,7 +149,7 @@ varList MatchUnit = []
 data Literal = LitInt Int | LitDouble Double
 
 data Term = Apply Term Term
-          | Let String Term Term
+          | Let [(String, Term)] Term
           | Lambda String Term
           | Case [(Pattern, Term)]
           | Var String
@@ -158,7 +165,7 @@ showCase (p, e) = show p ++ " -> " ++ show e
 
 showPrecT :: Int -> Term -> String
 showPrecT _ (Var str) = str
-showPrecT 0 (Let var e1 e2) = "let " ++ var ++ " = " ++ showPrecT 0 e1 ++ " in " ++ showPrecT 0 e2
+showPrecT 0 (Let vars e2) = "let " ++ show vars ++ " in " ++ showPrecT 0 e2
 showPrecT 0 e@(Lambda _ _) = let (vars, eIn) = unLambda e in "\\" ++ unwords vars ++ " -> " ++ showPrecT 0 eIn
 showPrecT 0 (Apply e1 e2) = showPrecT 0 e1 ++ " " ++ showPrecT 1 e2
 showPrecT 0 (Case es) = "Case \n" ++ unlines (fmap (("\t"++) . showCase) es)
@@ -167,3 +174,12 @@ showPrecT _ e = "(" ++ showPrecT 0 e ++ ")"
 
 instance Show Term where
   show = showPrecT 0
+
+{- Used to determine the type of any specific term -}
+data TypedTerm = AppT TypedTerm TypedTerm
+               | LetT String TypedTerm TypedTerm
+               | LambdaT String MonoType TypedTerm
+               | CaseT [(Pattern, TypedTerm)]
+               | VarT String MonoType
+               | CoerceT Term MonoType
+               | LitT Literal

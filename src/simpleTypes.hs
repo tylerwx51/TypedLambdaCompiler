@@ -1,4 +1,4 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, ScopedTypeVariables #-}
 module SimpleTypes where
 
 import Data.List as List hiding(lookup)
@@ -6,7 +6,7 @@ import Data.Map as Map hiding(foldr, foldl', fromList, fold)
 import qualified Data.Map as Map
 import Data.Foldable
 import Control.Applicative
-import Control.Arrow (second)
+import Control.Arrow (first, second)
 import Control.Monad.RWS hiding(fail, Sum)
 import Prelude hiding (fail, lookup)
 import Types
@@ -154,6 +154,17 @@ caseLam ((p, t):xs) = do
   v <- unify (apply s2 t1) t2
   return (s1 <> s2 <> v, apply v t2)
 
+checkVars :: (InferMonad m) => [(MonoType, Term)] -> m (Substition, [PolyType])
+checkVars [] = return (mempty, [])
+checkVars ((ty, e) : ts) = do
+  (s1, t1) <- typeCheck e
+  v <- unify t1 (apply s1 ty)
+  let subs = s1 <> v
+  localEnv (apply subs) $ do
+    pty <- generalize (apply v t1)
+    (s, ts') <- checkVars $ fmap (first (apply subs)) ts
+    return (subs <> s, apply s pty : ts')
+
 typeCheck :: (InferMonad m) => Term -> m (Substition, MonoType)
 typeCheck (Apply e1 e2) = do
   (s1, t1) <- typeCheck e1
@@ -165,13 +176,14 @@ typeCheck (Lambda var e) = do
   tIn <- newTVar
   (s1, tOut) <- localTypeEnv var (T tIn) $ typeCheck e
   return (s1, arrow (apply s1 tIn) tOut)
-typeCheck (Let var e1 e2) = do
-  newVar <- newTVar
-  (s1, t1) <- localEnv (addToEnv var (T newVar)) $ typeCheck e1
-  v <- unify (apply s1 newVar) t1
-  p1 <- localEnv (apply (s1 <> v)) $ generalize (apply v t1)
-  (s2, t2) <- localEnv (addToEnv var p1 . apply (s1 <> v)) $ typeCheck e2
-  return (s1 <> v <> s2, t2)
+typeCheck (Let vars e2) = do
+  newVars <- traverse (const newTVar) vars
+  let varNames = fmap fst vars
+      exprs = fmap snd vars
+
+  (s, pts) <- localEnv (<> TEnv (Map.fromList $ zip varNames (fmap T newVars))) $ checkVars $ zip newVars exprs
+  (s2, t2) <- localEnv ((<> TEnv (Map.fromList $ zip varNames pts)) . apply s) $ typeCheck e2
+  return (s <> s2, t2)
 typeCheck (Var str) = do
   pType <- lookupVar str
   t <- inst pType
@@ -222,10 +234,8 @@ runHM (HM hm) = do
   ((s, res), _, _) <- runRWST hm (TEnv $ Map.fromList [leftCon, rightCon, pairCon, unitCon, decayVoid, mkFix, unFix, fixTerm]) uniqueStringList
   return (res, s)
 
-data NatHelp a = Z | S a
-
 fixTest :: Term
-fixTest = Let "x" (Apply (Var "MkFix") $ Apply (Apply (Var "Pair") (Var "Unit")) (Var "x")) (Var "x")
+fixTest = Let [("x", (Apply (Var "MkFix") $ Apply (Apply (Var "Pair") (Var "Unit")) (Var "x")))] (Var "x")
 
 zTest :: Term
 zTest = Apply (Var "MkFix") (Apply (Var "Left") (Var "Unit"))
@@ -240,7 +250,19 @@ oneTest :: Term
 oneTest = Apply sTest zTest
 
 addTest :: Term
-addTest = Let "add" (Lambda "x" (Case [(MatchFix (MatchLeft MatchUnit), Var "x"),
+addTest = Let [("add", (Lambda "x" (Case [(MatchFix (MatchLeft MatchUnit), Var "x"),
                                        (MatchFix (MatchRight (Otherwise "y")),
-                                          Apply sTest (Apply (Apply (Var "add") (Var "x")) (Var "y")))]))
+                                          Apply sTest (Apply (Apply (Var "add") (Var "x")) (Var "y")))])))]
                     (Apply (Apply (Var "add") oneTest) natTest)
+
+trueTest :: Term
+trueTest = Apply (Var "Left") (Var "Unit")
+
+falseTest :: Term
+falseTest = Apply (Var "Right") (Var "Unit")
+
+ifTest :: Term
+ifTest = Lambda "p" $ Lambda "tBranch" $ Lambda "fBranch" $ Apply (Var "p") (Case [(MatchLeft MatchUnit, Var "tBranch"), (MatchRight MatchUnit, Var "fBranch")])
+
+mutual :: Term
+mutual = Let [("a", (Var "b")), ("b", (Var "a"))] (Var "b")

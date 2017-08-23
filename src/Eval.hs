@@ -40,9 +40,10 @@ evalTerm env (Apply e1 e2) =
       (ECon con args) -> ECon con (args ++ [xValue])
       (ECase inEnv partials) -> caseApply inEnv partials xValue
       _ -> undefined
-evalTerm env (Let var e1 e2) = let inEnv = (var, ERec inEnv e1) : env
-                                   v1 = evalTerm inEnv e1
-                               in evalTerm ((var, v1) : env) e2
+evalTerm env (Let vars e) = let newEnvs = fmap (\(var, e1) -> (var, ERec inEnv e1)) vars
+                                inEnv = newEnvs ++ env
+                                vs = fmap (\(var, e1) -> (var, evalTerm inEnv e1)) vars
+                            in evalTerm (vs ++ env) e
 evalTerm env (Lambda var e) = L env var e
 evalTerm env (Case ps) = ECase env ps
 evalTerm env (Var str) =
@@ -52,3 +53,4 @@ evalTerm env (Var str) =
     Nothing -> error $ "Can't find " ++ str
 evalTerm _ (Lit (LitInt num)) = EInt num
 evalTerm _ (Lit (LitDouble num)) = EDouble num
+evalTerm env (Coerce e _) = evalTerm env e
